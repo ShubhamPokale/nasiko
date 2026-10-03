@@ -1,137 +1,54 @@
-use std::fs::File;
-use std::io::{BufWriter, Write};
+[package]
+name = "nasiko-llm-router"
+edition.workspace = true
+version.workspace = true
 
-use nasiko_tool_compact::{decode_calls, encode_tools, ToolDef};
-use serde_json::{json, Value};
+[lib]
+path = "src/lib.rs"
 
-fn main() {
-    let raw = std::env::var("EVAL_SET").ok();
-    let default_eval = json!({
-        "schema_version": "compact-tools-eval@v1-sample",
-        "purpose": "offline validation",
-        "tools": [
-            {
-                "name": "create_calendar_event",
-                "description": "Create an event in the user's calendar.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "start": {"type": "string"},
-                        "duration_min": {"type": "integer"},
-                        "visibility": {"type": "string", "enum": ["public", "private"]},
-                        "attendees": {"type": "array", "items": {"type": "string"}}
-                    },
-                    "required": ["title", "start"]
-                }
-            },
-            {
-                "name": "send_email",
-                "description": "Send an email.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "to": {"type": "array", "items": {"type": "string"}},
-                        "subject": {"type": "string"},
-                        "body": {"type": "string"}
-                    },
-                    "required": ["to", "subject", "body"]
-                }
-            }
-        ],
-        "cases": [
-            {
-                "id": "ct-001",
-                "messages": [{"role": "user", "content": "Book a design review Monday 3pm IST with riya@example.com"}],
-                "expected": [{
-                    "name": "create_calendar_event",
-                    "arguments": {
-                        "title": "Design review",
-                        "start": "2026-10-05T15:00:00+05:30",
-                        "attendees": ["riya@example.com"]
-                    }
-                }]
-            },
-            {
-                "id": "ct-002",
-                "messages": [{"role": "user", "content": "Email sam@example.com that the build is green."}],
-                "expected": [{
-                    "name": "send_email",
-                    "arguments": {
-                        "to": ["sam@example.com"],
-                        "subject": "Build status",
-                        "body": "The build is green."
-                    }
-                }]
-            },
-            {
-                "id": "ct-003",
-                "messages": [{"role": "user", "content": "What's the weather?"}],
-                "expected": []
-            }
-        ]
-    });
+[[bin]]
+name = "llm-router"
+path = "src/bin/llm-router.rs"
 
-    let root: Value = match raw {
-        Some(path) => {
-            let raw_text = std::fs::read_to_string(path).expect("read EVAL_SET");
-            serde_json::from_str(&raw_text).expect("valid EVAL_SET JSON")
-        }
-        None => default_eval,
-    };
+[dependencies]
+nasiko-secrets.workspace = true
+nasiko-pricing.workspace = true
+nasiko-savings.workspace = true
+nasiko-tool-compact.workspace = true
+nasiko-compress.workspace = true
 
-    let tools: Vec<ToolDef> = root["tools"]
-        .as_array()
-        .unwrap_or(&Vec::new())
-        .iter()
-        .map(|tool| ToolDef {
-            name: tool["name"].as_str().unwrap_or_default().to_string(),
-            description: tool["description"].as_str().map(str::to_string),
-            parameters: tool.get("parameters").cloned(),
-        })
-        .collect();
+axum = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = { workspace = true }
+rand = { workspace = true }
+rand_distr = { workspace = true }
+sqlx = { workspace = true }
+reqwest = { workspace = true, features = ["json", "stream"] }
+futures = { workspace = true }
+async-stream = { workspace = true }
+bytes = { workspace = true }
+jsonwebtoken = { workspace = true }
+dashmap = { workspace = true }
+uuid = { workspace = true }
+redis = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
-    let cases = root["cases"].as_array().unwrap_or(&Vec::new());
-    let out_path = std::env::var("OUT").unwrap_or_else(|_| "compact-tools-out.jsonl".to_string());
-    let file = File::create(&out_path).expect("create OUT");
-    let mut writer = BufWriter::new(file);
+[dev-dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }
+serial_test = { workspace = true }
+base64 = { workspace = true }
+mockito = { workspace = true }
+tower = { workspace = true }
+zstd.workspace = true
 
-    let compact = encode_tools(&tools).unwrap_or_else(|err| {
-        panic!("encode_tools failed: {err}");
-    });
-
-    for case in cases {
-        let id = case["id"].as_str().unwrap_or("unknown");
-        let expected = case["expected"].as_array().unwrap_or(&Vec::new());
-        let rendered = expected.iter().map(|item| {
-            let name = item["name"].as_str().unwrap_or_default();
-            let args = item["arguments"].as_object().unwrap_or(&serde_json::Map::new());
-            format!("<<call {name} {}>>", serde_json::to_string(args).unwrap())
-        }).collect::<Vec<_>>().join("");
-
-        let roundtrip = decode_calls(&rendered, &tools).unwrap_or_else(|err| {
-            panic!("decode_calls failed for {id}: {err}");
-        });
-
-        let line = json!({
-            "id": id,
-            "compact_request": {
-                "messages": case.get("messages").cloned().unwrap_or(Value::Null),
-                "tools": compact.tools,
-                "instructions": compact.instructions,
-            },
-            "compacted": true,
-            "rendered_calls": rendered,
-            "roundtrip_calls": roundtrip.iter().map(|call| json!({
-                "name": call.name,
-                "arguments": call.arguments,
-            })).collect::<Vec<_>>(),
-            "decoded": {"calls": []}
-        });
-
-        writeln!(writer, "{line}").expect("write OUT");
-    }
-
-    writer.flush().expect("flush OUT");
-}
-
+[[example]]
+name = "compact_tools_eval"
+path = "examples/compact_tools_eval.rs"
