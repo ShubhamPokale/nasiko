@@ -1,0 +1,13 @@
+[package]
+name = "nasiko-tool-compact"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+regex = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
